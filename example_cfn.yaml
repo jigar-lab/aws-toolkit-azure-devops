@@ -2,7 +2,21 @@ AWSTemplateFormatVersion: "2010-09-09"
 
 Description: |
   "Create IAM OIDC provider and IAM Role for Azure DevOps Service Connection.
-  This template is for illustrative purposes only."
+  This template is for illustrative purposes only.
+
+  SECURITY NOTE: this template ships without any administrative permissions
+  attached to the service-connection role. The role is created with a
+  deny-all placeholder inline policy and a defensive permission boundary.
+  Operator guidance:
+    1. Replace the placeholder inline policy on ScnRole with the minimum
+       AWS actions and resources this specific pipeline needs. Do not
+       attach AdministratorAccess or any other wildcard policy.
+    2. Scope one role per pipeline / environment (for example one role
+       for dev, one for prod, one per application) rather than sharing a
+       single account-wide role.
+    3. Treat the PermissionsBoundary attached to ScnRole as a safety net,
+       not a substitute for least-privilege permissions."
+
 
 Parameters:
   AzdoOrgId:
@@ -29,7 +43,9 @@ Parameters:
     Default: "example-azure-devops-role"
     Description: |
       "Name of the IAM Role. 
-      This must match the 'Role to Assume' property of the Service Connection."
+      This must match the 'Role to Assume' property of the Service Connection.
+      It is strongly recommended to use a distinct role name per pipeline or
+      environment rather than a single shared account-wide role."
 Resources:
   OidcIdp:
     Type: AWS::IAM::OIDCProvider
@@ -37,13 +53,70 @@ Resources:
       ClientIdList:
         - api://AzureADTokenExchange
       Url: !Sub "https://vstoken.dev.azure.com/${AzdoOrgId}"
+  # Defensive permission boundary attached to the service-connection role.
+  # Even if the inline policy below is edited to be over-broad, this
+  # boundary caps what the role can ever do. It explicitly denies:
+  #   - all IAM write operations (prevents creating users / access keys /
+  #     attaching policies for persistence outside Azure DevOps),
+  #   - all AWS Organizations and Account write operations,
+  #   - arbitrary role-assumption calls (prevents lateral movement into
+  #     other roles in the account).
+  # Operators who need any of these actions in a specific pipeline should
+  # create a separate, narrowly-scoped role and boundary rather than
+  # relaxing this one.
+  ScnRolePermissionsBoundary:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      Description: "Permissions boundary for Azure DevOps service-connection roles. Caps effective permissions; attach alongside a least-privilege inline or customer-managed policy."
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: AllowAnythingNotExplicitlyDenied
+            Effect: Allow
+            Action: "*"
+            Resource: "*"
+          - Sid: DenyIamWrites
+            Effect: Deny
+            Action: "iam:*"
+            Resource: "*"
+          - Sid: DenyOrganizationsAndAccount
+            Effect: Deny
+            Action:
+              - "organizations:*"
+              - "account:*"
+            Resource: "*"
+          - Sid: DenyArbitraryAssumeRole
+            Effect: Deny
+            Action:
+              - "sts:AssumeRole"
+              - "sts:AssumeRoleWithSAML"
+              - "sts:AssumeRoleWithWebIdentity"
+            Resource: "*"
+
   ScnRole:
     Type: "AWS::IAM::Role"
     Properties:
       Path: "/"
-      ManagedPolicyArns:
-        - arn:aws:iam::aws:policy/AdministratorAccess
+      # No AWS-managed policies are attached by default. In particular,
+      # arn:aws:iam::aws:policy/AdministratorAccess is intentionally not
+      # attached: any pipeline step bound to this service connection would
+      # otherwise obtain full administrative control of the AWS account.
+      ManagedPolicyArns: []
+      PermissionsBoundary: !Ref ScnRolePermissionsBoundary
       RoleName: !Ref AzdoServiceConnectionRoleName
+      Policies:
+        # Replace the placeholder statement list below with the minimum
+        # set of AWS actions and resources this specific pipeline needs.
+        # Keep the policy scoped to concrete resource ARNs where possible
+        # and avoid wildcard actions.
+        - PolicyName: ScnRoleInlinePolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: PlaceholderDenyAllUntilOperatorGrantsLeastPrivilege
+                Effect: Deny
+                Action: "*"
+                Resource: "*"
       AssumeRolePolicyDocument: !Sub |
         {
           "Version": "2012-10-17",
@@ -66,3 +139,6 @@ Resources:
 Outputs:
   ScnRoleArn:
     Value: !GetAtt ScnRole.Arn
+  ScnRolePermissionsBoundaryArn:
+    Value: !Ref ScnRolePermissionsBoundary
+    Description: "ARN of the permission boundary attached to ScnRole. Reuse this boundary when creating additional per-pipeline / per-environment service-connection roles."
