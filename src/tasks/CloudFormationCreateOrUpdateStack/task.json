@@ -191,19 +191,19 @@
             "name": "capabilityIAM",
             "type": "boolean",
             "label": "Create/update IAM Resources ('CAPABILITY_IAM')",
-            "defaultValue": "true",
+            "defaultValue": "false",
             "required": false,
             "groupName": "Capabilities",
-            "helpMarkDown": "Capabilities that must be specified before AWS CloudFormation can update certain stacks. Some stack templates might include resources that can affect permissions in your AWS account, for example, by creating new AWS Identity and Access Management (IAM) users. For those stacks, you must explicitly acknowledge their capabilities by specifying this parameter.\n\nIf your stack manipulates IAM resources, you can specify either capability otherwise an InsufficientCapabilities error will be returned."
+            "helpMarkDown": "Capabilities that must be specified before AWS CloudFormation can update certain stacks. Some stack templates might include resources that can affect permissions in your AWS account, for example, by creating new AWS Identity and Access Management (IAM) users. For those stacks, you must explicitly acknowledge their capabilities by specifying this parameter.\n\nIf your stack manipulates IAM resources, you can specify either capability otherwise an InsufficientCapabilities error will be returned.\n\nFor change control, leave this unchecked unless the template is known to manipulate IAM resources, and prefer deploying the stack through a least-privilege 'Role ARN' rather than the service connection credentials."
         },
         {
             "name": "capabilityNamedIAM",
             "type": "boolean",
             "label": "Create/update Named IAM Resources ('CAPABILITY_NAMED_IAM')",
-            "defaultValue": "true",
+            "defaultValue": "false",
             "required": false,
             "groupName": "Capabilities",
-            "helpMarkDown": "Capabilities that must be specified before AWS CloudFormation can update certain stacks. Some stack templates might include resources that can affect permissions in your AWS account, for example, by creating new AWS Identity and Access Management (IAM) users. For those stacks, you must explicitly acknowledge their capabilities by specifying this parameter.\n\nIf your stack manipulates IAM resources with custom names, you must add this capability otherwise an InsufficientCapabilities error will be returned."
+            "helpMarkDown": "Capabilities that must be specified before AWS CloudFormation can update certain stacks. Some stack templates might include resources that can affect permissions in your AWS account, for example, by creating new AWS Identity and Access Management (IAM) users. For those stacks, you must explicitly acknowledge their capabilities by specifying this parameter.\n\nIf your stack manipulates IAM resources with custom names, you must add this capability otherwise an InsufficientCapabilities error will be returned.\n\nFor change control, leave this unchecked unless the template is known to manipulate named IAM resources, and prefer deploying the stack through a least-privilege 'Role ARN' rather than the service connection credentials."
         },
         {
             "name": "capabilityAutoExpand",
@@ -422,6 +422,7 @@
         "DeletingExistingChangeSet": "Deleting existing change set %s associated with stack %s",
         "FailedToDeleteChangeSet": "Change set deletion request failed with error: '%s'",
         "AddingCapability": "Setting capability %s for stack",
+        "CapabilityAcknowledgedWarning": "Warning: capability %s is being asserted. The template will be allowed to create or update IAM resources without an additional CloudFormation acknowledgement. Verify the template content and prefer deploying through a least-privilege 'Role ARN' rather than the service connection credentials.",
         "AddingTag": "Adding tag. Key '%s', Value '%s'",
         "AutoExecuteChangeSetOption": "Auto execute change set option: %s",
         "CreatingChangeSet": "Creating %s type change set %s",
