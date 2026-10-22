@@ -61,13 +61,17 @@ describe('Systems Manager Run Command', () => {
         expect(new TaskOperations(new SSM(), defaultTaskParameters)).not.toBeNull()
     })
 
-    test('Invalid document paramaters fails', () => {
+    test('Invalid document paramaters fails', async () => {
         expect.assertions(1)
         const ssm = new SSM() as any
         const taskParameters = { ...defaultTaskParameters }
         taskParameters.documentParameters = '{"key":'
         const taskOperations = new TaskOperations(ssm, taskParameters)
-        taskOperations.execute().catch(e => expect(`${e}`).toContain('SyntaxError'))
+        try {
+            await taskOperations.execute()
+        } catch (e) {
+            expect(`${e}`).toContain('Invalid documentParameters')
+        }
     })
 
     test('Instance from instance ids', async () => {
@@ -103,18 +107,53 @@ describe('Systems Manager Run Command', () => {
         expect.assertions(2)
         const ssm = new SSM() as any
         ssm.sendCommand = jest.fn(args => {
-            expect(args.Targets[0]).toStrictEqual({ Key: 'tag:watermelon', Values: ['fruit', 'green'] })
+            // Values are preserved verbatim: split only on the first '=' and no
+            // comma splitting (commas are not valid in EC2 tag values and are not
+            // a documented multi-value syntax for this input).
+            expect(args.Targets[0]).toStrictEqual({ Key: 'tag:watermelon', Values: ['fruit=green'] })
 
             return systemsManagerFails
         })
         const taskParameters = { ...defaultTaskParameters }
         taskParameters.instanceSelector = fromTags
-        taskParameters.instanceTags = ['watermelon=fruit,green']
+        taskParameters.instanceTags = ['watermelon=fruit=green']
         const taskOperations = new TaskOperations(ssm, taskParameters)
         try {
             await taskOperations.execute()
         } catch (e) {}
         expect(ssm.sendCommand).toBeCalledTimes(1)
+    })
+
+    test('Instance from tags rejects malformed line without equals', async () => {
+        expect.assertions(2)
+        const ssm = new SSM() as any
+        ssm.sendCommand = jest.fn()
+        const taskParameters = { ...defaultTaskParameters }
+        taskParameters.instanceSelector = fromTags
+        taskParameters.instanceTags = ['Owner']
+        const taskOperations = new TaskOperations(ssm, taskParameters)
+        try {
+            await taskOperations.execute()
+        } catch (e) {
+            expect(`${e}`).toContain('Invalid instanceTags entry')
+        }
+        expect(ssm.sendCommand).toBeCalledTimes(0)
+    })
+
+    test('Instance from tags rejects malformed line with empty value', async () => {
+        expect.assertions(2)
+        const ssm = new SSM() as any
+        ssm.sendCommand = jest.fn()
+        const taskParameters = { ...defaultTaskParameters }
+        taskParameters.instanceSelector = fromTags
+        taskParameters.instanceTags = ['Owner=']
+        const taskOperations = new TaskOperations(ssm, taskParameters)
+        try {
+            await taskOperations.execute()
+        } catch (e) {
+            expect(`${e}`).toContain('Invalid instanceTags entry')
+        }
+        expect(ssm.sendCommand).toBeCalledTimes(0)
     })
 
     test('Adds notification arn if it exists', async () => {

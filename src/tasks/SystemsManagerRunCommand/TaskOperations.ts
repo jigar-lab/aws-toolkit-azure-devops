@@ -36,7 +36,13 @@ export class TaskOperations {
             request.Comment = this.taskParameters.comment
         }
         if (this.taskParameters.documentParameters) {
-            request.Parameters = JSON.parse(this.taskParameters.documentParameters)
+            try {
+                request.Parameters = JSON.parse(this.taskParameters.documentParameters)
+            } catch (err) {
+                throw new Error(
+                    `Invalid documentParameters: expected JSON object, got parse error: ${(err as Error).message}`
+                )
+            }
         }
         if (this.taskParameters.cloudWatchOutputEnabled) {
             request.CloudWatchOutputConfig = {
@@ -55,12 +61,28 @@ export class TaskOperations {
 
             case fromTags:
                 request.Targets = []
-                // TODO repalce with getTags when https://github.com/aws/aws-toolkit-azure-devops/pull/184 merges
+                // Parse each line as Key=Value, splitting only on the first '=' so tag
+                // values containing '=' are preserved verbatim. Reject malformed lines
+                // (missing '=' or empty key/value) with a clear error rather than
+                // silently sending the command to a wider instance set.
                 this.taskParameters.instanceTags.forEach(it => {
-                    const kv = it.split('=')
-                    const t: SSM.Target = {}
-                    t.Key = 'tag:' + kv[0].trim()
-                    t.Values = kv[1].split(',')
+                    const firstEqualsIndex = it.indexOf('=')
+                    if (firstEqualsIndex < 1) {
+                        throw new Error(
+                            `Invalid instanceTags entry "${it}": expected Key=Value, one per line.`
+                        )
+                    }
+                    const key = it.substring(0, firstEqualsIndex).trim()
+                    const value = it.substring(firstEqualsIndex + 1).trim()
+                    if (!key || !value) {
+                        throw new Error(
+                            `Invalid instanceTags entry "${it}": key and value must both be non-empty.`
+                        )
+                    }
+                    const t: SSM.Target = {
+                        Key: 'tag:' + key,
+                        Values: [value]
+                    }
                     // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
                     request.Targets!.push(t)
                 })
