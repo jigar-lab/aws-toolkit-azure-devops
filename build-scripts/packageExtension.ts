@@ -64,13 +64,6 @@ function findMatchingFiles(directory: string) {
     return fs.readdirSync(directory)
 }
 
-function installNodePackages(directory: string) {
-    fs.mkdirpSync(directory)
-    const npmCmd = `npm install --prefix ${directory} azure-pipelines-task-lib --only=production`
-    const output = ncp.execSync(npmCmd)
-    console.log(output.toString('utf8'))
-}
-
 function generateGitHashFile() {
     try {
         const response = ncp.execSync('git rev-parse HEAD', { encoding: 'utf-8' }).toString()
@@ -85,7 +78,6 @@ function generateGitHashFile() {
 function packagePlugin(options: CommandLineOptions) {
     fs.mkdirpSync(folders.packageRoot)
     fs.mkdirpSync(folders.packageTasks)
-    const npmFolder = path.join(folders.buildRoot, 'npmcache')
 
     fs.copySync(path.join(folders.repoRoot, 'LICENSE'), path.join(folders.packageRoot, 'LICENSE'), { overwrite: true })
     fs.copySync(path.join(folders.repoRoot, 'README.md'), path.join(folders.packageRoot, 'README.md'), {
@@ -100,8 +92,10 @@ function packagePlugin(options: CommandLineOptions) {
     // stage manifest images
     fs.copySync(path.join(folders.repoRoot, 'images'), path.join(folders.packageRoot, 'images'), { overwrite: true })
 
-    // get required npm packages that will be copied
-    installNodePackages(npmFolder)
+    // Note: azure-pipelines-task-lib does not need to be staged here. The only file
+    // from that package that ships with each task (lib.json) is copied from the
+    // repository root node_modules below, which is installed by `npm ci` against the
+    // committed package-lock.json and is therefore version- and integrity-pinned.
 
     shelljsPatch.patch()
 
