@@ -318,6 +318,27 @@ function getSessionDuration() {
     return duration
 }
 
+// Registers the resolved AWS credentials with the Azure Pipelines agent so any
+// accidental echo in build logs is replaced with ***. This is defense in depth:
+// static service-connection fields are already marked confidential, but temporary
+// credentials materialized from assume-role/OIDC/instance profile are not, and
+// callers (SDK clients, AWS CLI / Shell Script / PowerShell tasks) can leak them
+// through diagnostic logging or user-supplied script environment dumps.
+function maskCredentials(credentials: AWS.Credentials | undefined): void {
+    if (!credentials) {
+        return
+    }
+    if (credentials.accessKeyId) {
+        tl.setSecret(credentials.accessKeyId)
+    }
+    if (credentials.secretAccessKey) {
+        tl.setSecret(credentials.secretAccessKey)
+    }
+    if (credentials.sessionToken) {
+        tl.setSecret(credentials.sessionToken)
+    }
+}
+
 // Probes for credentials to be used by the executing task. Credentials
 // can be configured as a service endpoint (of type 'AWS'), or specified
 // using task variables. If we don't discover credentials inside the
@@ -329,11 +350,13 @@ export async function getCredentials(awsParams: AWSConnectionParameters): Promis
 
     const role_credentials = await assumeRoleFromInstanceProfile(awsParams, tl.getInput('awsCredentials', false))
     if (typeof role_credentials !== 'undefined') {
+        maskCredentials(role_credentials)
         return role_credentials
     }
 
     const oidc_credentials = await attemptAssumeRoleFromOIDC(awsParams, tl.getInput('awsCredentials', false))
     if (oidc_credentials) {
+        maskCredentials(oidc_credentials)
         return oidc_credentials
     }
 
@@ -341,6 +364,15 @@ export async function getCredentials(awsParams: AWSConnectionParameters): Promis
         attemptEndpointCredentialConfiguration(awsParams, tl.getInput('awsCredentials', false)) ||
         attemptCredentialConfigurationFromVariables()
     if (credentials) {
+        // Resolve so that TemporaryCredentials materialize their access/secret/session
+        // values before we register them as pipeline secrets.
+        try {
+            await credentials.getPromise()
+        } catch (err) {
+            // Fall through: masking is best-effort; the caller will surface the real error.
+            tl.debug(`Unable to resolve credentials for masking: ${err}`)
+        }
+        maskCredentials(credentials)
         return credentials
     }
 
