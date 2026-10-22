@@ -9,6 +9,7 @@ import fs = require('fs-extra')
 import path = require('path')
 import folders = require('./scriptUtils')
 import os = require('os')
+import { allowedNonNodeTaskFiles, verifyPsModules } from './verifyPsModules'
 
 const timeMessage = 'Packaged extension'
 const manifestFile = 'vss-extension.json'
@@ -16,6 +17,62 @@ const manifestFile = 'vss-extension.json'
 const ignoredFolders = ['Common', '.DS_Store']
 
 const vstsFiles = ['task.json', 'task.loc.json', 'package.json', 'icon.png', 'Strings']
+
+// Known VSTS/Azure Pipelines task handler names. Any task.json whose
+// `execution` section lists one of these keys drives a specific packaging
+// branch below. The list is deliberately explicit so that newly introduced
+// handlers cause packaging to fail loudly instead of silently falling back
+// to a raw directory copy that would ship an unbundled task.
+const knownNodeHandlers = ['Node', 'Node10', 'Node14', 'Node16', 'Node20', 'Node20_1'] as const
+const knownNonNodeHandlers = ['PowerShell3'] as const
+const knownHandlers: readonly string[] = [...knownNodeHandlers, ...knownNonNodeHandlers]
+
+// Per non-Node task packaging allow-list. Each entry is a path (POSIX
+// separators) relative to the task's build folder. Only files on this list
+// are copied into the staged .vsix for that task; everything else - including
+// unexpected additions under ps_modules - is refused. The ps_modules files
+// are pulled from the integrity-pinned manifest so this allow-list cannot
+// drift from the SHA-256 pins in build-scripts/psModulesManifest.json.
+function nonNodeTaskAllowList(taskName: string): string[] {
+    const perTaskExtras: Record<string, string[]> = {
+        AWSPowerShellModuleScript: [
+            'task.json',
+            'task.loc.json',
+            'icon.png',
+            'RunAWSPowerShellModuleScript.ps1',
+            'Strings/resources.resjson/en-US/resources.resjson'
+        ]
+    }
+    const extras = perTaskExtras[taskName]
+    if (!extras) {
+        throw new Error(
+            'No non-Node packaging allow-list is defined for task ' +
+                taskName +
+                '. Add an explicit file list (and, for any vendored binaries, a SHA-256 entry in build-scripts/psModulesManifest.json) before packaging it.'
+        )
+    }
+    return [...extras, ...allowedNonNodeTaskFiles(taskName)]
+}
+
+// Files that are allowed to be missing from a non-Node task's build output.
+// Everything else on the allow-list must exist (so a typo in the allow-list
+// or a missing resource is caught by the build).
+const optionalNonNodeFiles = new Set(['task.loc.json', 'Strings/resources.resjson/en-US/resources.resjson'])
+
+function copyAllowList(sourceDir: string, destDir: string, relFiles: string[]): void {
+    for (const rel of relFiles) {
+        const src = path.join(sourceDir, ...rel.split('/'))
+        if (!fs.existsSync(src)) {
+            if (optionalNonNodeFiles.has(rel)) {
+                continue
+            }
+            throw new Error('Allow-listed file ' + rel + ' is missing from ' + sourceDir)
+        }
+        const dest = path.join(destDir, ...rel.split('/'))
+        fs.mkdirpSync(path.dirname(dest))
+        fs.copySync(src, dest, { overwrite: true })
+    }
+}
 
 interface CommandLineOptions {
     publisher?: string
@@ -83,6 +140,10 @@ function generateGitHashFile() {
 }
 
 function packagePlugin(options: CommandLineOptions) {
+    // Fail the package step before anything is copied if a vendored binary
+    // has been changed without a matching entry in psModulesManifest.json.
+    verifyPsModules()
+
     fs.mkdirpSync(folders.packageRoot)
     fs.mkdirpSync(folders.packageTasks)
     const npmFolder = path.join(folders.buildRoot, 'npmcache')
@@ -121,13 +182,29 @@ function packagePlugin(options: CommandLineOptions) {
 
         // eslint-disable-next-line @typescript-eslint/no-var-requires
         const taskDef = require(path.join(taskBuildFolder, 'task.json'))
-        if (
-            !Object.hasOwnProperty.call(taskDef.execution, 'Node') &&
-            !Object.hasOwnProperty.call(taskDef.execution, 'Node10') &&
-            !Object.hasOwnProperty.call(taskDef.execution, 'Node14')
-        ) {
-            console.log('Copying non-node task ' + taskName)
-            fs.copySync(taskBuildFolder, taskPackageFolder)
+        const declaredHandlers = Object.keys(taskDef.execution ?? {})
+        if (declaredHandlers.length === 0) {
+            throw new Error('Task ' + taskName + ' has no execution handlers declared in task.json')
+        }
+        const unknownHandlers = declaredHandlers.filter(h => !knownHandlers.includes(h))
+        if (unknownHandlers.length > 0) {
+            // Fail loudly rather than silently falling back to a raw directory
+            // copy: an unknown handler means we do not know whether this task
+            // should be bundled with esbuild, hash-pinned under ps_modules, or
+            // packaged some other way, and shipping it unverified would be a
+            // supply-chain regression.
+            throw new Error(
+                'Task ' +
+                    taskName +
+                    ' declares unknown execution handler(s): ' +
+                    unknownHandlers.join(', ') +
+                    '. Update build-scripts/packageExtension.ts (knownNodeHandlers / knownNonNodeHandlers) to add a packaging branch for the new handler before this task can be packaged.'
+            )
+        }
+        const hasNodeHandler = declaredHandlers.some(h => (knownNodeHandlers as readonly string[]).includes(h))
+        if (!hasNodeHandler) {
+            console.log('Copying non-node task ' + taskName + ' using an explicit allow-list')
+            copyAllowList(taskBuildFolder, taskPackageFolder, nonNodeTaskAllowList(taskName))
 
             return
         }
