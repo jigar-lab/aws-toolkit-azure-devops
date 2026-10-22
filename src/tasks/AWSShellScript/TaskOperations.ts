@@ -3,11 +3,12 @@
  * SPDX-License-Identifier: MIT
  */
 
-import { debug, exist, loc, mkdirP, tool, which } from 'azure-pipelines-task-lib/task'
+import { debug, loc, mkdirP, tool, which } from 'azure-pipelines-task-lib/task'
 import { IExecOptions } from 'azure-pipelines-task-lib/toolrunner'
 import { getCredentials, getRegion } from 'lib/awsConnectionParameters'
 import { SdkUtils } from 'lib/sdkutils'
-import { unlinkSync, writeFileSync } from 'fs'
+import * as fs from 'fs'
+import { mkdtempSync, writeFileSync } from 'fs'
 import { basename, dirname, join, posix } from 'path'
 import { inlineScriptType, TaskParameters } from './TaskParameters'
 
@@ -19,6 +20,7 @@ export class TaskOperations {
     // or from a file
     public async execute(): Promise<number> {
         let scriptPath = ''
+        let scriptTempDir = ''
         try {
             await this.configureAWSContext()
             await SdkUtils.configureHttpProxyFromAgentProxyConfiguration('AWSShellScript')
@@ -26,10 +28,24 @@ export class TaskOperations {
             const bash = tool(which('bash', true))
 
             if (this.taskParameters.scriptType === inlineScriptType) {
-                const tempDir = SdkUtils.getTempLocation()
+                const tempRoot = SdkUtils.getTempLocation()
+                // Create an unguessable, 0700-mode directory inside the temp root and
+                // write the inline script there with exclusive-create (O_EXCL via 'wx')
+                // and 0600 permissions. This prevents pre-created-file / symlink TOCTOU
+                // attacks and keeps the script contents unreadable to other local users.
+                scriptTempDir = mkdtempSync(join(tempRoot, 'awsshellscript-'))
+                try {
+                    fs.chmodSync(scriptTempDir, 0o700)
+                } catch {
+                    // best-effort; mkdtempSync already restricts via umask on POSIX
+                }
                 const fileName = `awsshellscript_${process.pid}.sh`
-                scriptPath = join(tempDir, fileName)
-                writeFileSync(scriptPath, this.taskParameters.inlineScript, { encoding: 'utf-8' })
+                scriptPath = join(scriptTempDir, fileName)
+                writeFileSync(scriptPath, this.taskParameters.inlineScript, {
+                    encoding: 'utf-8',
+                    mode: 0o600,
+                    flag: 'wx'
+                })
             } else {
                 scriptPath = this.taskParameters.filePath
             }
@@ -67,9 +83,58 @@ export class TaskOperations {
 
             return await bash.exec((execOptions as unknown) as IExecOptions)
         } finally {
-            if (this.taskParameters.scriptType === inlineScriptType && scriptPath && exist(scriptPath)) {
-                unlinkSync(scriptPath)
+            if (this.taskParameters.scriptType === inlineScriptType && scriptTempDir) {
+                TaskOperations.removeDirectoryRecursive(scriptTempDir)
             }
+        }
+    }
+
+    // Recursively remove a directory. Equivalent to `rm -rf` but works on the Node 10
+    // baseline declared in package.json (fs.rmSync / fs.rmdirSync({recursive:true})
+    // were only added later). Uses lstat so symlinks are unlinked rather than followed.
+    private static removeDirectoryRecursive(target: string): void {
+        let stat: fs.Stats
+        try {
+            stat = fs.lstatSync(target)
+        } catch {
+            return
+        }
+        if (!stat.isDirectory()) {
+            try {
+                fs.unlinkSync(target)
+            } catch {
+                /* ignore */
+            }
+            return
+        }
+        let entries: string[] = []
+        try {
+            entries = fs.readdirSync(target)
+        } catch {
+            /* ignore */
+        }
+        for (const entry of entries) {
+            const entryPath = join(target, entry)
+            let entryStat: fs.Stats
+            try {
+                entryStat = fs.lstatSync(entryPath)
+            } catch {
+                continue
+            }
+            if (entryStat.isDirectory()) {
+                TaskOperations.removeDirectoryRecursive(entryPath)
+            } else {
+                try {
+                    fs.unlinkSync(entryPath)
+                } catch {
+                    /* ignore */
+                }
+            }
+        }
+        try {
+            fs.rmdirSync(target)
+        } catch {
+            /* ignore */
         }
     }
 
