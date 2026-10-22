@@ -4,6 +4,7 @@
  */
 
 import ncp = require('child_process')
+import crypto = require('crypto')
 import esbuild = require('esbuild')
 import fs = require('fs-extra')
 import path = require('path')
@@ -24,12 +25,24 @@ interface CommandLineOptions {
 /**
  * Patch shelljs, because it is not compatible with esbuild
  * More info: https://github.com/aws/aws-toolkit-azure-devops/pull/539
+ *
+ * NOTE: in-place mutation of node_modules is a stopgap. The target path is
+ * anchored to `folders.repoRoot` (not `process.cwd()`), process-level signal
+ * and exit handlers are wired so an interrupted build still restores the
+ * original bytes, and after `unpatch()` the restored file's SHA-256 is
+ * compared to the pre-patch hash so a half-restored dependency surfaces as a
+ * build failure instead of silently leaking into later runs.
  */
 class ShelljsPatch {
-    private static readonly shelljsRootPath = path.resolve(process.cwd(), './node_modules/shelljs/')
+    private static readonly shelljsRootPath = path.resolve(folders.repoRoot, 'node_modules', 'shelljs')
     private static readonly shelljsEntryPath = path.join(ShelljsPatch.shelljsRootPath, 'shell.js')
 
     private originalContent: string | undefined
+    private originalHash: string | undefined
+
+    private static sha256(content: string): string {
+        return crypto.createHash('sha256').update(content, 'utf-8').digest('hex')
+    }
 
     patch() {
         const sourceRequireString =
@@ -49,6 +62,7 @@ class ShelljsPatch {
         fs.writeFileSync(ShelljsPatch.shelljsEntryPath, patchedContent)
 
         this.originalContent = originalContent
+        this.originalHash = ShelljsPatch.sha256(originalContent)
     }
 
     unpatch() {
@@ -57,8 +71,56 @@ class ShelljsPatch {
             this.originalContent = undefined
         }
     }
+
+    /**
+     * Verify that the file on disk matches the SHA-256 recorded before patching.
+     * Should be called after `unpatch()` on a successful build. Throws if the
+     * restored bytes do not match, so a corrupted workspace cannot be mistaken
+     * for a clean one.
+     */
+    verifyRestored() {
+        if (!this.originalHash) {
+            return
+        }
+        const currentContent = fs.readFileSync(ShelljsPatch.shelljsEntryPath, 'utf-8')
+        const currentHash = ShelljsPatch.sha256(currentContent)
+        if (currentHash !== this.originalHash) {
+            throw new Error(
+                `shelljs/shell.js was not restored to its pre-patch content (expected sha256 ${this.originalHash}, got ${currentHash}). Run 'npm ci' to restore the verified bytes.`
+            )
+        }
+        this.originalHash = undefined
+    }
 }
 const shelljsPatch = new ShelljsPatch()
+
+// Ensure an interrupted build (SIGINT/SIGTERM, uncaught exception, or any
+// normal/abnormal exit) does not leave node_modules/shelljs/shell.js mutated
+// in the workspace, where every later `npm run package`, `npm test` and `jest`
+// run would consume it.
+let cleanupRan = false
+function cleanupShelljsPatch() {
+    if (cleanupRan) {
+        return
+    }
+    cleanupRan = true
+    try {
+        shelljsPatch.unpatch()
+    } catch (err) {
+        // Best-effort: a failure here must not shadow the original signal/exit.
+        console.error('Failed to restore node_modules/shelljs/shell.js:', err)
+    }
+}
+process.on('exit', cleanupShelljsPatch)
+for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP', 'SIGBREAK'] as NodeJS.Signals[]) {
+    process.on(signal, () => {
+        cleanupShelljsPatch()
+        // Re-raise with the conventional 128+signal exit code so the parent
+        // process sees the interruption rather than a clean exit.
+        const signalNumbers: Record<string, number> = { SIGINT: 2, SIGTERM: 15, SIGHUP: 1, SIGBREAK: 21 }
+        process.exit(128 + (signalNumbers[signal] || 0))
+    })
+}
 
 function findMatchingFiles(directory: string) {
     return fs.readdirSync(directory)
@@ -159,6 +221,7 @@ function packagePlugin(options: CommandLineOptions) {
     })
 
     shelljsPatch.unpatch()
+    shelljsPatch.verifyRestored()
 
     console.log('Creating deployment vsix')
 
@@ -194,6 +257,7 @@ try {
     packagePlugin(parsedOptions)
 } catch (e) {
     shelljsPatch.unpatch()
+    shelljsPatch.verifyRestored()
     throw e
 }
 
