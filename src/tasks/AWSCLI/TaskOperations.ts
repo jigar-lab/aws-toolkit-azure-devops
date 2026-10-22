@@ -5,7 +5,7 @@
 
 import * as tl from 'azure-pipelines-task-lib/task'
 import * as tr from 'azure-pipelines-task-lib/toolrunner'
-import { getCredentials, getRegion } from 'lib/awsConnectionParameters'
+import { exportCredentialsToEnv, getCredentials, getRegion } from 'lib/awsConnectionParameters'
 import { SdkUtils } from 'lib/sdkutils'
 import { TaskParameters } from './TaskParameters'
 
@@ -46,13 +46,9 @@ export class TaskOperations {
         if (credentials) {
             await credentials.getPromise()
             tl.debug('configure credentials into environment variables')
-            env.AWS_ACCESS_KEY_ID = credentials.accessKeyId
-            env.AWS_SECRET_ACCESS_KEY = credentials.secretAccessKey
+            exportCredentialsToEnv(credentials, env)
             if (connectionParams.AssumeRoleARN) {
                 env.AWS_ROLE_ARN = connectionParams.AssumeRoleARN
-            }
-            if (credentials.sessionToken) {
-                env.AWS_SESSION_TOKEN = credentials.sessionToken
             }
         }
 

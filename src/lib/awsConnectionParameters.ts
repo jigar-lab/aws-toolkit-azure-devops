@@ -318,6 +318,38 @@ function getSessionDuration() {
     return duration
 }
 
+// Registers each resolved credential component with the Azure Pipelines
+// secret masker and then exports it into the supplied environment. Used
+// by tasks that hand `process.env` to a child process (shell script,
+// aws CLI, dotnet lambda) so that STS-derived temporary credentials -
+// which the agent cannot know in advance - are redacted from the build
+// log if the child echoes them (set -x, env, aws --debug, etc.). Mirrors
+// the masking that `SdkUtils.createAndConfigureSdkClient` performs for
+// the same values (see src/lib/sdkutils.ts).
+export function exportCredentialsToEnv(
+    credentials: AWS.Credentials,
+    env: NodeJS.ProcessEnv = process.env
+): void {
+    // Mask credentials from logs if they are accidentally printed by the
+    // caller-supplied child process. Registering with tl.setSecret must
+    // happen before the values are placed in env.
+    if (credentials.accessKeyId) {
+        tl.setSecret(credentials.accessKeyId)
+    }
+    if (credentials.secretAccessKey) {
+        tl.setSecret(credentials.secretAccessKey)
+    }
+    if (credentials.sessionToken) {
+        tl.setSecret(credentials.sessionToken)
+    }
+
+    env.AWS_ACCESS_KEY_ID = credentials.accessKeyId
+    env.AWS_SECRET_ACCESS_KEY = credentials.secretAccessKey
+    if (credentials.sessionToken) {
+        env.AWS_SESSION_TOKEN = credentials.sessionToken
+    }
+}
+
 // Probes for credentials to be used by the executing task. Credentials
 // can be configured as a service endpoint (of type 'AWS'), or specified
 // using task variables. If we don't discover credentials inside the

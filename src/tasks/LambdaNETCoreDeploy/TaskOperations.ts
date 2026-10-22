@@ -5,7 +5,7 @@
 
 import { Credentials } from 'aws-sdk'
 import * as tl from 'azure-pipelines-task-lib/task'
-import { getRegion } from 'lib/awsConnectionParameters'
+import { exportCredentialsToEnv, getRegion } from 'lib/awsConnectionParameters'
 import { DotNetCliWrapper, DotNetLambdaWrapper } from 'lib/dotNetCliWrapper'
 import { SdkUtils } from 'lib/sdkutils'
 import fs = require('fs')
@@ -48,11 +48,7 @@ export class TaskOperations {
         if (this.credentials) {
             await this.credentials.getPromise()
             tl.debug('configure credentials into environment variables')
-            env.AWS_ACCESS_KEY_ID = this.credentials.accessKeyId
-            env.AWS_SECRET_ACCESS_KEY = this.credentials.secretAccessKey
-            if (this.credentials.sessionToken) {
-                env.AWS_SESSION_TOKEN = this.credentials.sessionToken
-            }
+            exportCredentialsToEnv(this.credentials, env)
         }
 
         const region = await getRegion()
