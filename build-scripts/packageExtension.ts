@@ -162,23 +162,56 @@ function packagePlugin(options: CommandLineOptions) {
 
     console.log('Creating deployment vsix')
 
-    const binName = os.platform() === 'win32' ? `tfx.cmd` : 'tfx'
+    const isWindows = os.platform() === 'win32'
+    const binName = isWindows ? `tfx.cmd` : 'tfx'
     const tfx = path.join(process.cwd(), 'node_modules', '.bin', binName)
+
+    // Validate the derived package-root path: it is interpolated into argv that
+    // eventually reaches a child process. Reject shell metacharacters so that a
+    // workspace checkout path containing e.g. `&` or `|` cannot inject commands.
+    const shellMetaRegex = /[&|<>^"'`$%!()\r\n]/
+    if (shellMetaRegex.test(folders.packageRoot)) {
+        throw new Error(
+            `Refusing to run tfx: packageRoot contains shell metacharacters: ${folders.packageRoot}`
+        )
+    }
+
     const args: string[] = ['extension', 'create', '--root', folders.packageRoot]
 
     args.push('--output-path', folders.packageRoot)
     args.push('--manifests', path.join(folders.packageRoot, manifestFile))
 
     if (options.publisher) {
+        // Allow-list validation per CWE-78 hardening: the publisher value comes
+        // from `process.argv` and must not reach a child process (or cmd.exe)
+        // with shell metacharacters embedded.
+        if (!/^[A-Za-z0-9._-]+$/.test(options.publisher)) {
+            throw new Error(
+                `Invalid --publisher value: ${JSON.stringify(options.publisher)}. ` +
+                    `Must match ^[A-Za-z0-9._-]+$.`
+            )
+        }
         args.push('--publisher', options.publisher)
     }
 
-    console.log('Packaging with:' + `${tfx} ${args.join(' ')}`)
+    // Log the argv array, not a naive join, so operators can see exactly which
+    // arguments are passed and metacharacters are not obscured.
+    console.log('Packaging with:', tfx, args)
 
-    ncp.execFileSync(tfx, args, {
-        stdio: 'inherit',
-        shell: os.platform() === 'win32' // for tfx.cmd on Windows.
-    })
+    // Keep the argv array separated: do NOT use `shell: true`, which would make
+    // Node collapse argv into a single cmd.exe string without per-arg quoting.
+    // On Windows we invoke the `.cmd` shim explicitly via `cmd.exe /c`, which
+    // Node's child_process already quotes argv for when `shell` is left false.
+    if (isWindows) {
+        ncp.execFileSync('cmd.exe', ['/d', '/s', '/c', tfx, ...args], {
+            stdio: 'inherit',
+            windowsVerbatimArguments: false
+        })
+    } else {
+        ncp.execFileSync(tfx, args, {
+            stdio: 'inherit'
+        })
+    }
 
     console.log('Packaging successful')
 }
