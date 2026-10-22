@@ -108,6 +108,6 @@ describe('ECR Pull image', () => {
         const taskOperations = new TaskOperations(ecr, dockerHandler, taskParameters)
         await taskOperations.execute()
         expect(ecr.getAuthorizationToken).toBeCalledTimes(1)
-        expect(runDockerCommand.mock.calls[0][2][4]).toStrictEqual('https://example.com')
+        expect(runDockerCommand.mock.calls[0][2][3]).toStrictEqual('https://example.com')
     })
 })

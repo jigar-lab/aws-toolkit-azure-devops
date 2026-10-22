@@ -27,9 +27,21 @@ export async function loginToRegistry(
         tl.setSecret(tokens[1]) // password
     }
 
-    await dockerHandler.runDockerCommand(dockerPath, 'login', ['-u', tokens[0], '-p', tokens[1], endpoint], {
-        silent: true
-    })
+    // Pass the registry password on docker's stdin via `--password-stdin` instead of
+    // placing it on the command line. Command-line arguments are readable from the host
+    // process table (e.g. /proc/<pid>/cmdline on Linux, WMI/Win32_Process on Windows) by
+    // any other local user or concurrent job on a shared/self-hosted agent, which would
+    // leak the 12-hour ECR push/pull credential. `tl.setSecret` and `silent: true`
+    // only scrub the pipeline log, not argv, so stdin is the correct channel.
+    await dockerHandler.runDockerCommand(
+        dockerPath,
+        'login',
+        ['--username', tokens[0], '--password-stdin', endpoint],
+        {
+            silent: true,
+            input: Buffer.from(tokens[1], 'utf8')
+        } as any
+    )
 }
 
 export async function getEcrAuthorizationData(ecrClient: ECR): Promise<ECR.AuthorizationData | undefined> {
