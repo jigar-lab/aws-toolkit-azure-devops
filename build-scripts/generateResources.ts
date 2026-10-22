@@ -24,6 +24,24 @@ function findMatchingFiles(directory: string): string[] {
     return fs.readdirSync(directory)
 }
 
+// Strict schema for the remotely fetched endpoints.json. The downloaded
+// region keys and descriptions are string-interpolated into the shipped
+// task.json manifests, so any value that lands in `availableRegions` ends
+// up in the published .vsix. Reject anything that does not match these
+// patterns to prevent arbitrary remote content from being embedded.
+//
+// Region id examples: 'us-east-1', 'eu-central-1', 'cn-north-1'. The AWS
+// spec restricts region ids to lowercase ASCII letters, digits and hyphens.
+const REGION_KEY_PATTERN = /^[a-z0-9-]{1,32}$/
+// Descriptions are human-readable labels such as 'US East (N. Virginia)'.
+// Restrict to bounded printable ASCII to keep manifest content predictable
+// and prevent control characters or non-ASCII payloads from being shipped.
+const REGION_DESCRIPTION_PATTERN = /^[\x20-\x7E]{1,128}$/
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+    return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
 // Downloads the latest known AWS regions file used by the various
 // AWS toolkits and constructs an object we can inject into each
 // task's region picker options.
@@ -38,10 +56,38 @@ async function fetchLatestRegions(): Promise<string[]> {
         const response = await axios.get(endpointsFileUrl)
         const allEndpoints = response.data
 
+        if (!isPlainObject(allEndpoints) || !Array.isArray(allEndpoints.partitions)) {
+            throw new Error(
+                `Fetched endpoints.json does not match the expected schema: 'partitions' must be an array`
+            )
+        }
+
         for (const partition of allEndpoints.partitions) {
+            if (!isPlainObject(partition) || !isPlainObject(partition.regions)) {
+                throw new Error(
+                    `Fetched endpoints.json partition entry is malformed: 'regions' must be an object`
+                )
+            }
             const regionKeys = Object.keys(partition.regions)
             regionKeys.forEach((rk: string) => {
-                availableRegions[rk] = `${partition.regions[rk].description} [${rk.toString()}]`
+                if (!REGION_KEY_PATTERN.test(rk)) {
+                    throw new Error(
+                        `Fetched endpoints.json contains a region id that does not match ${REGION_KEY_PATTERN}: ${JSON.stringify(rk)}`
+                    )
+                }
+                const regionEntry = (partition.regions as Record<string, unknown>)[rk]
+                if (!isPlainObject(regionEntry)) {
+                    throw new Error(
+                        `Fetched endpoints.json region '${rk}' is malformed: entry must be an object`
+                    )
+                }
+                const description = regionEntry.description
+                if (typeof description !== 'string' || !REGION_DESCRIPTION_PATTERN.test(description)) {
+                    throw new Error(
+                        `Fetched endpoints.json region '${rk}' has an invalid description (must match ${REGION_DESCRIPTION_PATTERN})`
+                    )
+                }
+                availableRegions[rk] = `${description} [${rk.toString()}]`
             })
         }
 
