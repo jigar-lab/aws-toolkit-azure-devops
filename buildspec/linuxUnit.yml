@@ -16,8 +16,50 @@ phases:
             - VCS_COMMIT_ID="${CODEBUILD_RESOLVED_SOURCE_VERSION}"
             - CI_BUILD_URL=$(echo $CODEBUILD_BUILD_URL | sed 's/#/%23/g') # Encode `#` in the URL because otherwise the url is clipped in the Codecov.io site
             - CI_BUILD_ID="${CODEBUILD_BUILD_ID}"
-            - test -n "$CODE_COV_TOKEN" && curl -s https://codecov.io/bash > codecov.sh || true # this sometimes times out but we don't want to fail the build
-            - test -n "$CODE_COV_TOKEN" && bash ./codecov.sh -t $CODE_COV_TOKEN || true
+            # Codecov coverage upload — pinned to a verified Codecov Uploader release.
+            # The legacy `curl -s https://codecov.io/bash | bash` pattern was the vector of
+            # the April 2021 Codecov Bash Uploader compromise. We no longer curl-pipe a
+            # third-party script. Instead we download a specific pinned uploader version,
+            # verify its integrity against Codecov's published PGP signature (whose key
+            # fingerprint is pinned below) AND against the SHA-256 checksum committed to
+            # this repository, and only then execute it. Any verification failure fails
+            # the build (no trailing `|| true`). The token is piped on stdin rather than
+            # passed on the command line.
+            - |
+              if [ -n "$CODE_COV_TOKEN" ]; then
+                set -e
+                CODECOV_UPLOADER_VERSION="v0.7.3"
+                CODECOV_PGP_FINGERPRINT="2703 4E7F DB85 0E0B BC2C  62FF 806B B28A ED77 9869"
+                # Download the pinned uploader, its checksum, and its signature.
+                curl -fsSL --retry 3 --retry-delay 2 \
+                  "https://uploader.codecov.io/${CODECOV_UPLOADER_VERSION}/linux/codecov" -o codecov
+                curl -fsSL --retry 3 --retry-delay 2 \
+                  "https://uploader.codecov.io/${CODECOV_UPLOADER_VERSION}/linux/codecov.SHA256SUM" -o codecov.SHA256SUM
+                curl -fsSL --retry 3 --retry-delay 2 \
+                  "https://uploader.codecov.io/${CODECOV_UPLOADER_VERSION}/linux/codecov.SHA256SUM.sig" -o codecov.SHA256SUM.sig
+                # Import Codecov's PGP key and verify the fingerprint matches the pinned value.
+                curl -fsSL --retry 3 --retry-delay 2 https://keybase.io/codecovsecurity/pgp_keys.asc \
+                  | gpg --no-default-keyring --keyring trustedkeys.gpg --import
+                ACTUAL_FP="$(gpg --no-default-keyring --keyring trustedkeys.gpg --fingerprint --with-colons \
+                  | awk -F: '/^fpr:/ {print $10; exit}')"
+                EXPECTED_FP="$(echo "$CODECOV_PGP_FINGERPRINT" | tr -d ' ')"
+                if [ "$ACTUAL_FP" != "$EXPECTED_FP" ]; then
+                  echo "Codecov PGP fingerprint mismatch: $ACTUAL_FP != $EXPECTED_FP" >&2
+                  exit 1
+                fi
+                # Verify the checksum file was signed by the pinned Codecov key, then
+                # verify the uploader binary matches the signed checksum.
+                gpgv --keyring trustedkeys.gpg codecov.SHA256SUM.sig codecov.SHA256SUM
+                sha256sum -c codecov.SHA256SUM
+                chmod +x codecov
+                VCS_COMMIT_ID="${CODEBUILD_RESOLVED_SOURCE_VERSION}"
+                CI_BUILD_URL="$(echo "$CODEBUILD_BUILD_URL" | sed 's/#/%23/g')"
+                CI_BUILD_ID="${CODEBUILD_BUILD_ID}"
+                export VCS_COMMIT_ID CI_BUILD_URL CI_BUILD_ID
+                # Pass the token via environment (CODECOV_TOKEN) rather than on argv so it
+                # is not disclosed in the process listing.
+                CODECOV_TOKEN="$CODE_COV_TOKEN" ./codecov -Z
+              fi
 
 reports:
     unit-test:

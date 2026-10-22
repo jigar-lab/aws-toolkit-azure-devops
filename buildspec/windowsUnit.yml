@@ -4,7 +4,26 @@ phases:
         commands:
             - |
                 if(-Not($Env:CODE_COV_TOKEN -eq $null)) {
-                    choco install -y --no-progress codecov
+                    # Pin the Chocolatey `codecov` package to an explicit version and
+                    # require checksum verification of the files it fetches. Previously
+                    # this ran `choco install codecov` with no --version and no checksum
+                    # requirement, so the build host installed whatever the Chocolatey
+                    # feed served at build time (same unverified-third-party-code pattern
+                    # as the Linux `curl | bash` path).
+                    #
+                    # `--require-checksums` makes Chocolatey abort if the downloaded
+                    # binary does not match the SHA-256/SHA-512 recorded in the pinned
+                    # package version's chocolateyInstall.ps1. If a newer uploader
+                    # version is required, bump CODECOV_CHOCO_VERSION after verifying
+                    # the new package's publisher and checksum metadata on the
+                    # Chocolatey community site; do not revert to an unpinned install.
+                    $ErrorActionPreference = 'Stop'
+                    $CODECOV_CHOCO_VERSION = '1.14.0'
+                    choco install codecov `
+                      --yes --no-progress `
+                      --version=$CODECOV_CHOCO_VERSION `
+                      --require-checksums
+                    if ($LASTEXITCODE -ne 0) { throw "choco install codecov failed" }
                 }
     pre_build:
         commands:
