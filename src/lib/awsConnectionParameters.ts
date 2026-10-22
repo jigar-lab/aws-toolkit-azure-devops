@@ -161,9 +161,13 @@ async function assumeRoleFromInstanceProfile(
     authInfo.roleSessionName = authInfo.roleSessionName ?? defaultRoleSessionName
     if (!authInfo.accessKey && !authInfo.secretKey && authInfo.assumeRoleArn) {
         console.log('Assuming role without credentials (via instance profile)...')
-        const params = {
+        const params: STS.AssumeRoleRequest = {
             RoleArn: authInfo.assumeRoleArn,
-            RoleSessionName: authInfo.roleSessionName
+            RoleSessionName: authInfo.roleSessionName,
+            DurationSeconds: getSessionDuration()
+        }
+        if (authInfo.externalId) {
+            params.ExternalId = authInfo.externalId
         }
         const sts = new STS()
         const data = await sts.assumeRole(params).promise()
