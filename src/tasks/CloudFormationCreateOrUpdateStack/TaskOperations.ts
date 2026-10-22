@@ -395,10 +395,12 @@ export class TaskOperations {
 
         if (capabilityIAM) {
             console.log(tl.loc('AddingCapability', 'CAPABILITY_IAM'))
+            tl.warning(tl.loc('CapabilityAcknowledgedWarning', 'CAPABILITY_IAM'))
             arr.push('CAPABILITY_IAM')
         }
         if (capabilityNamedIAM) {
             console.log(tl.loc('AddingCapability', 'CAPABILITY_NAMED_IAM'))
+            tl.warning(tl.loc('CapabilityAcknowledgedWarning', 'CAPABILITY_NAMED_IAM'))
             arr.push('CAPABILITY_NAMED_IAM')
         }
         if (capabilityAutoExpand) {
