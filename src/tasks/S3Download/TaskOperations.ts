@@ -45,6 +45,11 @@ export class TaskOperations {
         const allKeys = await this.fetchAllObjectKeys()
         for (const glob of this.taskParameters.globExpressions) {
             const matchedKeys = await this.matchObjectKeys(allKeys, this.taskParameters.sourceFolder, glob)
+            if (matchedKeys.length === 0) {
+                tl.warning(
+                    tl.loc('NoMatchingFilesFound', this.taskParameters.sourceFolder || '/', glob)
+                )
+            }
             for (const matchedKey of matchedKeys) {
                 let dest: string
                 if (this.taskParameters.flattenFolders) {
@@ -122,23 +127,18 @@ export class TaskOperations {
                 Prefix: this.taskParameters.sourceFolder,
                 ContinuationToken: nextToken
             }
-            try {
-                const s3Data = await this.s3Client.listObjectsV2(params).promise()
-                nextToken = s3Data.NextContinuationToken
-                if (s3Data.Contents) {
-                    s3Data.Contents.forEach(s3object => {
-                        // AWS IDE toolkits can cause 0 byte 'folder markers' to be in the bucket,
-                        // filter those out
-                        if (s3object.Key) {
-                            if (!s3object.Key.endsWith('_$folder$')) {
-                                allKeys.push(s3object.Key)
-                            }
+            const s3Data = await this.s3Client.listObjectsV2(params).promise()
+            nextToken = s3Data.NextContinuationToken
+            if (s3Data.Contents) {
+                s3Data.Contents.forEach(s3object => {
+                    // AWS IDE toolkits can cause 0 byte 'folder markers' to be in the bucket,
+                    // filter those out
+                    if (s3object.Key) {
+                        if (!s3object.Key.endsWith('_$folder$')) {
+                            allKeys.push(s3object.Key)
                         }
-                    })
-                }
-            } catch (err) {
-                console.error(err)
-                nextToken = undefined
+                    }
+                })
             }
         } while (nextToken)
 

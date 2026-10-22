@@ -170,6 +170,7 @@
         "MatchedKey": "...matched key %s",
         "DownloadingFiles": "Downloading files from %s in bucket %s to %s",
         "BucketNotExist": "Bucket %s does not exist",
+        "NoMatchingFilesFound": "No files found in source \"%s\" that match pattern \"%s\"",
         "TaskCompleted": "Downloads from S3 completed"
     }
 }
