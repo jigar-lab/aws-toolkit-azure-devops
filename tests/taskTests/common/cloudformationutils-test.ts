@@ -6,6 +6,7 @@
 import { CloudFormation } from 'aws-sdk'
 import {
     captureStackOutputs,
+    isSafeStackOutputVariableName,
     setWaiterParams,
     testChangeSetExists,
     testStackExists,
@@ -98,5 +99,19 @@ describe('CloudFormationUtils', () => {
         expect(await testChangeSetExists(cloudFormation, 'changeset', 'stack')).toBe(false)
         cloudFormation.describeChangeSet = jest.fn(() => cloudFormationDescribeStacksSucceeds)
         expect(await testChangeSetExists(cloudFormation, 'changeset', 'stack')).toBe(true)
+    })
+
+    test('Stack output variable name validation accepts alphanumeric names and rejects reserved/invalid names', () => {
+        // Valid CloudFormation output logical IDs (alphanumeric, starting with a letter).
+        expect(isSafeStackOutputVariableName('MyBucketName')).toBe(true)
+        expect(isSafeStackOutputVariableName('EndpointUrl1')).toBe(true)
+        // Invalid identifier shapes.
+        expect(isSafeStackOutputVariableName('')).toBe(false)
+        expect(isSafeStackOutputVariableName('1LeadingDigit')).toBe(false)
+        expect(isSafeStackOutputVariableName('has_underscore')).toBe(false)
+        expect(isSafeStackOutputVariableName('has-dash')).toBe(false)
+        // Reserved / process-control names an attacker could use for environment poisoning.
+        expect(isSafeStackOutputVariableName('PATH')).toBe(false)
+        expect(isSafeStackOutputVariableName('Path')).toBe(false)
     })
 })

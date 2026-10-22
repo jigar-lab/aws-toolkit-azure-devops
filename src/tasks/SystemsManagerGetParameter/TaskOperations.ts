@@ -5,7 +5,7 @@
 
 import SSM = require('aws-sdk/clients/ssm')
 import tl = require('azure-pipelines-task-lib/task')
-import { readModeHierarchy, readModeSingle, transformParameterToVariableName } from 'lib/ssm'
+import { isSafeSsmVariableName, readModeHierarchy, readModeSingle, transformParameterToVariableName } from 'lib/ssm'
 import { TaskParameters } from './TaskParameters'
 
 export class TaskOperations {
@@ -86,6 +86,18 @@ export class TaskOperations {
             nextToken = response.NextToken
             for (const p of response.Parameters) {
                 const outputVariableName = transformParameterToVariableName(this.taskParameters, p.Name)
+                // The output variable name is derived from remote SSM data (the parameter
+                // name returned by getParametersByPath, optionally run through a
+                // `substitute` regex). Reject names that are not valid identifiers or
+                // that collide with process-control / agent-reserved variables so an
+                // actor with ssm:PutParameter on the configured path cannot poison the
+                // agent environment (e.g. PATH, NODE_OPTIONS, LD_PRELOAD, AWS_*, AGENT_*).
+                if (!isSafeSsmVariableName(outputVariableName)) {
+                    tl.warning(
+                        `Skipping SSM parameter '${p.Name}': derived variable name '${outputVariableName}' is not a valid identifier or collides with a reserved/process-control variable (e.g. PATH, NODE_OPTIONS, AWS_*, AGENT_*, SYSTEM_*, BUILD_*).`
+                    )
+                    continue
+                }
                 const isSecret = p.Type === 'SecureString'
                 console.log(tl.loc('SettingVariable', outputVariableName, p.Name, isSecret))
 
