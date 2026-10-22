@@ -10,6 +10,7 @@ import * as AWS from 'aws-sdk/global'
 import { AWSConnectionParameters, getCredentials, getRegion } from 'lib/awsConnectionParameters'
 import { VSTSTaskManifest } from 'lib/vstsUtils'
 import * as fs from 'fs'
+import * as os from 'os'
 import * as path from 'path'
 import { format, parse } from 'url'
 
@@ -55,12 +56,21 @@ export abstract class SdkUtils {
     }
 
     // prefer Agent.TempDirectory but if not available due to use of a lower agent version
-    // (it was added in agent v2.115.0), fallback to using TEMP
+    // (it was added in agent v2.115.0), fallback to using TEMP, then to os.tmpdir().
+    // The returned path is always a non-empty, absolute path; an empty/relative value
+    // from the agent variable or TEMP is rejected so callers do not materialise temp
+    // files in the current working directory.
     public static getTempLocation(): string {
         let tempDirectory = tl.getVariable(this.agentTempDirectoryVariable)
-        if (!tempDirectory) {
-            tempDirectory = process.env.TEMP || ''
-            console.log(`Agent.TempDirectory not available, falling back to TEMP location at ${tempDirectory}`)
+        if (!tempDirectory || !path.isAbsolute(tempDirectory)) {
+            const envTemp = process.env.TEMP
+            if (envTemp && path.isAbsolute(envTemp)) {
+                tempDirectory = envTemp
+                console.log(`Agent.TempDirectory not available, falling back to TEMP location at ${tempDirectory}`)
+            } else {
+                tempDirectory = os.tmpdir()
+                console.log(`Agent.TempDirectory not available, falling back to os.tmpdir() at ${tempDirectory}`)
+            }
         }
 
         return tempDirectory
