@@ -43,7 +43,12 @@ export class TaskOperations {
 
             if (this.taskParameters.outputVariable) {
                 console.log(tl.loc('SettingOutputVariable', this.taskParameters.outputVariable))
-                tl.setVariable(this.taskParameters.outputVariable, outValue)
+                if (this.taskParameters.captureAsSecuredVar && outValue) {
+                    // register the value as a secret so the agent masks it from build logs if a
+                    // later step echoes the variable; this also makes the tl.debug above effective.
+                    tl.setSecret(outValue)
+                }
+                tl.setVariable(this.taskParameters.outputVariable, outValue, this.taskParameters.captureAsSecuredVar)
             }
 
             console.log(tl.loc('TaskCompleted', this.taskParameters.functionName))

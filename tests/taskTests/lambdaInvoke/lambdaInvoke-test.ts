@@ -17,7 +17,8 @@ const baseTaskParameters: TaskParameters = {
     payload: '',
     invocationType: '',
     logType: '',
-    outputVariable: ''
+    outputVariable: '',
+    captureAsSecuredVar: true
 }
 
 const awsResponseThrows = {

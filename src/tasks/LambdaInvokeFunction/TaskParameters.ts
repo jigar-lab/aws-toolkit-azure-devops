@@ -5,6 +5,7 @@
 
 import { AWSConnectionParameters, buildConnectionParameters } from 'lib/awsConnectionParameters'
 import { getInputOrEmpty, getInputRequired } from 'lib/vstsUtils'
+import * as tl from 'azure-pipelines-task-lib/task'
 
 export interface TaskParameters {
     awsConnectionParameters: AWSConnectionParameters
@@ -13,6 +14,7 @@ export interface TaskParameters {
     invocationType: string
     logType: string
     outputVariable: string
+    captureAsSecuredVar: boolean
 }
 
 export function buildTaskParameters(): TaskParameters {
@@ -22,6 +24,7 @@ export function buildTaskParameters(): TaskParameters {
         payload: getInputOrEmpty('payload'),
         invocationType: getInputOrEmpty('invocationType'),
         logType: getInputOrEmpty('logType'),
-        outputVariable: getInputOrEmpty('outputVariable')
+        outputVariable: getInputOrEmpty('outputVariable'),
+        captureAsSecuredVar: tl.getBoolInput('captureAsSecuredVar', false)
     }
 }
