@@ -22,9 +22,21 @@ const options = {
     filter: filterFunc
 }
 
-console.time(timeMessage)
-console.log(`Copying files from ${folders.sourceTasks} to ${folders.buildTasks}`)
-fs.copy(folders.sourceTasks, folders.buildTasks, options)
-    .then(() => console.info('Successfully copied files'))
-    .catch(error => console.info(`Copy failed with error: ${error}`))
-console.timeEnd(timeMessage)
+async function run() {
+    console.time(timeMessage)
+    console.log(`Copying files from ${folders.sourceTasks} to ${folders.buildTasks}`)
+    // Prune the staging directory before copying so files that were deleted
+    // from the source tree do not survive from a previous build. Without this,
+    // packaging would re-ship stale artifacts.
+    fs.removeSync(folders.buildTasks)
+    await fs.copy(folders.sourceTasks, folders.buildTasks, options)
+    console.info('Successfully copied files')
+    console.timeEnd(timeMessage)
+}
+
+run().catch(error => {
+    // Fail hard: the previous implementation logged via console.info and exited
+    // 0, which allowed `fullBuild` to continue packaging a partial tree.
+    console.error(`Copy failed with error: ${error}`)
+    process.exit(1)
+})

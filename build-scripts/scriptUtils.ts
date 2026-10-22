@@ -12,5 +12,8 @@ export const buildTasks = path.join(buildRoot, 'src', 'tasks')
 export const packageRoot = path.join(repoRoot, 'package')
 // This is uppercase for backwards compatibility
 export const packageTasks = path.join(packageRoot, 'Tasks')
+// Output directory for the generated .vsix, deliberately outside packageRoot
+// so build outputs do not accumulate inside the directory used as tfx --root.
+export const vsixOutput = path.join(repoRoot, 'dist')
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 export const releaseVersion = require(path.join(repoRoot, 'package.json')).version

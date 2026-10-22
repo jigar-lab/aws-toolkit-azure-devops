@@ -4,6 +4,7 @@
 **/node_modules/
 **/build/
 **/package/
+**/dist/
 
 **/*.log
 **/*.map
