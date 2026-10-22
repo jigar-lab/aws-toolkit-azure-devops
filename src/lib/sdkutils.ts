@@ -205,18 +205,44 @@ export abstract class SdkUtils {
     ): Promise<string> {
         // use async call so we handle static vs instance credentials correctly
         return new Promise<string>((resolve, reject) => {
+            // Bound the replay window with a short, explicit expiry (seconds).
+            const presignExpirySeconds = 300
             s3Client.getSignedUrl(
                 operation,
                 {
                     Bucket: bucketName,
-                    Key: objectKey
+                    Key: objectKey,
+                    Expires: presignExpirySeconds
                 },
                 function(err: any, url: string) {
                     if (err) {
                         console.log(`Failed to generate presigned url to template, error: ${err}`)
                         reject(err)
                     } else {
-                        console.log(`Generated url to template: ${url}`)
+                        // The signed URL is a bearer credential (contains X-Amz-Signature
+                        // and, for assumed-role sessions, X-Amz-Security-Token). Register
+                        // it with the agent's secret masker so it is redacted if any other
+                        // code path echoes it, and keep the full URL out of the default
+                        // build log — only emit it under tl.debug (System.Debug=true).
+                        try {
+                            tl.setSecret(url)
+                            const parsedUrl = parse(url, true)
+                            const q = parsedUrl.query || {}
+                            const signature = q['X-Amz-Signature']
+                            const securityToken = q['X-Amz-Security-Token']
+                            if (typeof signature === 'string' && signature) {
+                                tl.setSecret(signature)
+                                tl.setSecret(decodeURIComponent(signature))
+                            }
+                            if (typeof securityToken === 'string' && securityToken) {
+                                tl.setSecret(securityToken)
+                                tl.setSecret(decodeURIComponent(securityToken))
+                            }
+                        } catch (maskErr) {
+                            tl.debug(`Failed to register presigned url components as secret: ${maskErr}`)
+                        }
+                        console.log(`Generated presigned url for s3://${bucketName}/${objectKey}`)
+                        tl.debug(`Generated url to template: ${url}`)
                         resolve(url)
                     }
                 }
