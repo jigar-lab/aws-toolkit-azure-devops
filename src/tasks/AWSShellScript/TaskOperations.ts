@@ -5,7 +5,7 @@
 
 import { debug, exist, loc, mkdirP, tool, which } from 'azure-pipelines-task-lib/task'
 import { IExecOptions } from 'azure-pipelines-task-lib/toolrunner'
-import { getCredentials, getRegion } from 'lib/awsConnectionParameters'
+import { exportCredentialsToEnv, getCredentials, getRegion } from 'lib/awsConnectionParameters'
 import { SdkUtils } from 'lib/sdkutils'
 import { unlinkSync, writeFileSync } from 'fs'
 import { basename, dirname, join, posix } from 'path'
@@ -112,11 +112,7 @@ export class TaskOperations {
         if (credentials) {
             await credentials.getPromise()
             debug('configure credentials into environment variables')
-            env.AWS_ACCESS_KEY_ID = credentials.accessKeyId
-            env.AWS_SECRET_ACCESS_KEY = credentials.secretAccessKey
-            if (credentials.sessionToken) {
-                env.AWS_SESSION_TOKEN = credentials.sessionToken
-            }
+            exportCredentialsToEnv(credentials, env)
         }
 
         const region = await getRegion()
