@@ -1,0 +1,37 @@
+{
+    "comment": "SHA-256 manifest for vendored prebuilt third-party binaries and helper scripts under src/tasks/**/ps_modules. Every file listed here is pinned by content hash and must match before the extension can be packaged. If an entry is updated, record the upstream source (version + git commit) in the comment next to it and update this manifest in the same change. See build-scripts/verifyPsModules.ts for the verifier that enforces this manifest.",
+    "modules": {
+        "src/tasks/AWSPowerShellModuleScript/ps_modules/VstsTaskSdk": {
+            "upstream": {
+                "name": "vsts-task-lib (VstsTaskSdk PowerShell SDK)",
+                "repository": "https://github.com/microsoft/azure-pipelines-task-lib",
+                "notes": "Prebuilt PowerShell SDK vendored into this repository. The committed VstsTaskSdk.psd1 still contains the upstream _COMMIT_HASH_ / ModuleVersion = '0.1' build placeholders. Until the vendored copy is replaced with a pinned upstream release, the SHA-256 hashes below are what the build is pinned to."
+            },
+            "files": {
+                "FindFunctions.ps1": "ce63a5bb8b5506bc5802841124184c720dd6a6b3087d919996842852ad3c4a81",
+                "InputFunctions.ps1": "4d502f6371cab425d5518506718f21a46144fcbfa2b2bdf4cf800f70880ad1aa",
+                "LegacyFindFunctions.ps1": "ea2b659f85aaee610e5ea3498a34f9d433131136a78e790ed345a84cb15ab7fb",
+                "LocalizationFunctions.ps1": "914f0fa90dfc2e95b3dae8c7edb0812d23746e522a88c220cf623ae8c5803251",
+                "LoggingCommandFunctions.ps1": "3654c88aacf888b727c29eb863ea26e76b7ae33f8d0f46ba07acab50ed66a2b9",
+                "LongPathFunctions.ps1": "901efaae76c39ebdce6573aa9f6752e16dfbf886286f12e2557ac309e9f25f93",
+                "Minimatch.dll": "91a56088140d86f7a30a2bb6ea01c3b918ef355ee5163a2d1149c60b345aed4e",
+                "OutFunctions.ps1": "1e2bf22e685a55878687c74c9fc56ba349beb94f028df620a29eff5a9b06b9f1",
+                "ServerOMFunctions.ps1": "e5d3756a572fbb513e08a3e9b945bb4c37071b4fcb421f30635243730989231c",
+                "ToolFunctions.ps1": "6c1d0c61b8ed6a905034716150fb0d4fff8587862e6d659e376a43fec236a711",
+                "TraceFunctions.ps1": "4cfca7d359d38c90d2749c2b6e0760f4c9732189d0ab8716aa556071af45b740",
+                "VstsTaskSdk.dll": "a61d7a422af8a0300895731948d98a3648983b392280a8a5d5959fd25425f144",
+                "VstsTaskSdk.psd1": "bb670a0df3e26418cce63c6947ec691c0b959e9bb60cde41077a9f6f6c0111d2",
+                "VstsTaskSdk.psm1": "18ab0019b134adbd9acc1782ec2ba334ac13964085b2521b82293a338f93a529",
+                "lib.json": "427bd697f7cda567dc241760747e92bf0616acf6e30cc290bcce19604986147e"
+            },
+            "authenticodeSignatures": {
+                "comment": "Authenticode publisher gate for the vendored .NET assemblies. verifyPsModules.ts invokes Get-AuthenticodeSignature on Windows and refuses to package if the subject does not match the expected publisher. The check is skipped (with a warning) on non-Windows platforms since Authenticode is only verifiable via the Windows CryptoAPI.",
+                "expectedSubject": "CN=Microsoft Corporation",
+                "assemblies": [
+                    "VstsTaskSdk.dll",
+                    "Minimatch.dll"
+                ]
+            }
+        }
+    }
+}
