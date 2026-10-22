@@ -36,8 +36,17 @@ export class BeanstalkUtils {
         try {
             if (stat.isFile()) {
                 console.log(tl.loc('AddingAspNetCoreBundle', dotnetPublishPath))
-                zip.addFile(path.basename(dotnetPublishPath), fs.readFileSync(dotnetPublishPath))
-                const manifest = this.generateManifest('./' + path.basename(dotnetPublishPath), '/')
+                const bundleBasename = path.basename(dotnetPublishPath)
+                // Reject file names containing characters that could break out of
+                // the JSON string context in the Windows deployment manifest
+                // (quotes, backslashes, control characters including newlines).
+                if (!/^[^"\\\x00-\x1f\x7f]+$/.test(bundleBasename)) {
+                    throw new Error(
+                        `Invalid dotnetPublishPath file name '${bundleBasename}': must not contain quotes, backslashes, or control characters.`
+                    )
+                }
+                zip.addFile(bundleBasename, fs.readFileSync(dotnetPublishPath))
+                const manifest = this.generateManifest('./' + bundleBasename, '/')
                 console.log(tl.loc('AddingManifest'))
                 zip.addFile('aws-windows-deployment-manifest.json', Buffer.from(manifest))
             } else {
@@ -98,23 +107,25 @@ export class BeanstalkUtils {
     }
 
     public static generateManifest(appBundle: string, iisPath: string): string {
-        const manifest = `{
-"manifestVersion": 1,
-"deployments": {
-
-"aspNetCoreWeb": [
-  {
-    "name": "app",
-    "parameters": {
-      "appBundle": "${appBundle}",
-
-      "iisPath": "${iisPath}",
-      "iisWebSite": "Default Web Site"
-    }
-  }
-]
-}
-}`
+        // Build the manifest with JSON.stringify so that any special characters
+        // in appBundle/iisPath are properly escaped and cannot inject additional
+        // keys (e.g. scripts.preInstall) into the deployment manifest that
+        // Elastic Beanstalk interprets on the target instance.
+        const manifest = JSON.stringify({
+            manifestVersion: 1,
+            deployments: {
+                aspNetCoreWeb: [
+                    {
+                        name: 'app',
+                        parameters: {
+                            appBundle: appBundle,
+                            iisPath: iisPath,
+                            iisWebSite: 'Default Web Site'
+                        }
+                    }
+                ]
+            }
+        })
 
         return manifest
     }
