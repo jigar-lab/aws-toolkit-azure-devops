@@ -9,6 +9,7 @@ import * as scriptUtils from './scriptUtils'
 
 fs.removeSync(scriptUtils.buildRoot)
 fs.removeSync(scriptUtils.packageRoot)
+fs.removeSync(scriptUtils.vsixOutput)
 
 fs.readdirSync(scriptUtils.sourceTasks).forEach(taskName => {
     try {

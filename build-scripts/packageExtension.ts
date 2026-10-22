@@ -83,8 +83,14 @@ function generateGitHashFile() {
 }
 
 function packagePlugin(options: CommandLineOptions) {
+    // Prune the previous package output so files that no longer exist in the
+    // source tree (or were removed from staging) are not re-shipped in the
+    // .vsix. Without this, `tfx extension create --root package` would pack
+    // whatever stale artifacts remained from a prior build.
+    fs.removeSync(folders.packageRoot)
     fs.mkdirpSync(folders.packageRoot)
     fs.mkdirpSync(folders.packageTasks)
+    fs.mkdirpSync(folders.vsixOutput)
     const npmFolder = path.join(folders.buildRoot, 'npmcache')
 
     fs.copySync(path.join(folders.repoRoot, 'LICENSE'), path.join(folders.packageRoot, 'LICENSE'), { overwrite: true })
@@ -166,7 +172,9 @@ function packagePlugin(options: CommandLineOptions) {
     const tfx = path.join(process.cwd(), 'node_modules', '.bin', binName)
     const args: string[] = ['extension', 'create', '--root', folders.packageRoot]
 
-    args.push('--output-path', folders.packageRoot)
+    // Write the .vsix outside of --root so build outputs do not accumulate
+    // inside the directory that is packed on the next run.
+    args.push('--output-path', folders.vsixOutput)
     args.push('--manifests', path.join(folders.packageRoot, manifestFile))
 
     if (options.publisher) {
