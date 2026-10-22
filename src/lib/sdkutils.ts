@@ -117,7 +117,11 @@ export abstract class SdkUtils {
                         logger(`  Path: ${httpRequest.path}`)
                         logger('  Headers:')
                         Object.keys(httpRequest.headers).forEach(element => {
-                            logger(`    ${element}=${httpRequest.headers[element]}`)
+                            const value = SdkUtils.redactSensitiveHeader(
+                                element,
+                                httpRequest.headers[element]
+                            )
+                            logger(`    ${element}=${value}`)
                         })
                     }
 
@@ -140,7 +144,10 @@ export abstract class SdkUtils {
         // If not already set for the service, poke any obtained credentials and/or
         // region into the service options. If credentials remain undefined, the sdk
         // will attempt to auto-infer from the host environment variables or, if EC2,
-        // instance metadata
+        // instance metadata. getCredentials() registers the resolved access key id,
+        // secret access key and session token with tl.setSecret so any accidental
+        // echo (SigV4 Authorization header, x-amz-security-token, env dumps from
+        // AWSCLI/AWSShellScript/AWSPowerShellModuleScript) is masked by the agent.
         if (awsServiceOpts) {
             if (!awsServiceOpts.credentials) {
                 const creds = await getCredentials(taskParams)
@@ -160,21 +167,29 @@ export abstract class SdkUtils {
         // resolve credentials
         await credentials?.getPromise()
 
-        // Mask credentials from logs if they are accidentially printed somehow
-        if (credentials?.accessKeyId) {
-            tl.setSecret(credentials?.accessKeyId)
-        }
-        if (credentials?.secretAccessKey) {
-            tl.setSecret(credentials?.secretAccessKey)
-        }
-        if (credentials?.sessionToken) {
-            tl.setSecret(credentials?.sessionToken)
-        }
-
         return new awsService({
             credentials: credentials ? credentials.getPromise() : undefined,
             region: await getRegion()
         })
+    }
+
+    // Headers whose values carry live AWS credential material or signing secrets
+    // and must not appear verbatim in build logs even when the pipeline author
+    // enables the diagnostic logRequest input. tl.setSecret already masks the
+    // credential values registered in getCredentials(), but we redact at the
+    // source as defense in depth and to cover the SigV4 Authorization header,
+    // whose Signature component is derived from the secret access key.
+    private static readonly sensitiveRequestHeaders: ReadonlyArray<string> = [
+        'authorization',
+        'x-amz-security-token',
+        'x-amz-content-sha256'
+    ]
+
+    public static redactSensitiveHeader(name: string, value: unknown): string {
+        if (name && SdkUtils.sensitiveRequestHeaders.indexOf(name.toLowerCase()) !== -1) {
+            return '***'
+        }
+        return String(value)
     }
 
     public static async roleArnFromName(iamClient: IAM, roleName: string): Promise<string> {
