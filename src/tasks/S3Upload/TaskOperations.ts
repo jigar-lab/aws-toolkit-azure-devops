@@ -40,12 +40,54 @@ export class TaskOperations {
     public findMatchingFiles(taskParameters: TaskParameters): string[] {
         console.log(`Searching ${taskParameters.sourceFolder} for files to upload`)
         taskParameters.sourceFolder = path.normalize(taskParameters.sourceFolder)
-        // Follows sym links, but is currently broken: https://github.com/aws/aws-toolkit-azure-devops/issues/178
-        const allPaths = tl.find(taskParameters.sourceFolder)
+        // Do not follow symbolic links while enumerating files to upload. Following links
+        // would allow a symlink committed inside sourceFolder to exfiltrate files from
+        // elsewhere on the agent (e.g. ~/.aws/credentials) to S3.
+        const findOptions: tl.FindOptions = {
+            allowBrokenSymbolicLinks: false,
+            followSpecifiedSymbolicLink: false,
+            followSymbolicLinks: false
+        }
+        const allPaths = tl.find(taskParameters.sourceFolder, findOptions)
         tl.debug(tl.loc('AllPaths', allPaths))
         const matchedPaths = tl.match(allPaths, taskParameters.globExpressions, taskParameters.sourceFolder)
         tl.debug(tl.loc('MatchedPaths', matchedPaths))
-        const matchedFiles = matchedPaths.filter(itemPath => !tl.stats(itemPath).isDirectory())
+        // Use lstat so symbolic links are not dereferenced here either; drop any entry
+        // that is not a regular file or whose real path escapes sourceFolder.
+        const resolvedRoot = path.resolve(taskParameters.sourceFolder)
+        const matchedFiles = matchedPaths.filter(itemPath => {
+            let lst: fs.Stats
+            try {
+                lst = fs.lstatSync(itemPath)
+            } catch (err) {
+                tl.debug(`Skipping ${itemPath}: ${(err as Error).message}`)
+                return false
+            }
+            if (lst.isDirectory()) {
+                return false
+            }
+            if (lst.isSymbolicLink()) {
+                tl.warning(`Skipping symbolic link ${itemPath}: symlinks are not followed for safety`)
+                return false
+            }
+            if (!lst.isFile()) {
+                return false
+            }
+            try {
+                const realPath = fs.realpathSync(itemPath)
+                const relative = path.relative(resolvedRoot, realPath)
+                if (relative.startsWith('..') || path.isAbsolute(relative)) {
+                    tl.warning(
+                        `Skipping ${itemPath}: resolved path ${realPath} is outside sourceFolder ${resolvedRoot}`
+                    )
+                    return false
+                }
+            } catch (err) {
+                tl.debug(`Skipping ${itemPath}: ${(err as Error).message}`)
+                return false
+            }
+            return true
+        })
         tl.debug(tl.loc('MatchedFiles', matchedFiles))
         tl.debug(tl.loc('FoundNFiles', matchedFiles.length))
 
@@ -169,7 +211,27 @@ export class TaskOperations {
 
             targetPath = targetPath.replace(/\\/g, '/')
             const stats = fs.lstatSync(matchedFile)
+            if (stats.isSymbolicLink()) {
+                tl.warning(`Skipping symbolic link ${matchedFile}: symlinks are not followed for safety`)
+                continue
+            }
             if (!stats.isDirectory()) {
+                // Defence in depth: re-verify that the file we are about to stream
+                // resolves to a location inside the configured sourceFolder.
+                try {
+                    const resolvedRoot = path.resolve(this.taskParameters.sourceFolder)
+                    const realPath = fs.realpathSync(matchedFile)
+                    const relative = path.relative(resolvedRoot, realPath)
+                    if (relative.startsWith('..') || path.isAbsolute(relative)) {
+                        tl.warning(
+                            `Skipping ${matchedFile}: resolved path ${realPath} is outside sourceFolder ${resolvedRoot}`
+                        )
+                        continue
+                    }
+                } catch (err) {
+                    tl.warning(`Skipping ${matchedFile}: ${(err as Error).message}`)
+                    continue
+                }
                 const fileBuffer = fs.createReadStream(matchedFile)
                 try {
                     let contentType: string | false

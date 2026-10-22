@@ -8,6 +8,7 @@ import AdmZip = require('adm-zip')
 import S3 = require('aws-sdk/clients/s3')
 import { AWSError } from 'aws-sdk/lib/error'
 import * as tl from 'azure-pipelines-task-lib/task'
+import { BeanstalkUtils } from 'lib/beanstalkUtils'
 import { SdkUtils } from 'lib/sdkutils'
 import fs = require('fs')
 import path = require('path')
@@ -168,7 +169,11 @@ export class TaskOperations {
         const zip = new AdmZip()
 
         try {
-            zip.addLocalFolder(bundleFolder)
+            // Do not follow symbolic links when packaging the deployment bundle.
+            // A symlink inside bundleFolder could otherwise exfiltrate arbitrary
+            // agent-local files (AWS credentials, agent diagnostic logs, ...) into
+            // the archive that is uploaded to S3 and deployed by CodeDeploy.
+            BeanstalkUtils.addLocalFolderSafe(zip, bundleFolder)
             zip.writeZip(archive)
         } catch (err) {
             console.log(tl.loc('ZipError', err))

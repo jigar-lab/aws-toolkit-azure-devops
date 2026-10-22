@@ -22,6 +22,62 @@ export class BeanstalkUtils {
         return response.S3Bucket
     }
 
+    /**
+     * Safely add every regular file beneath `localFolder` to `zip` under the given
+     * `zipPathPrefix`. Symbolic links are skipped, and any file whose realpath
+     * escapes `localFolder` is excluded. This prevents a symlink committed inside
+     * the published folder from exfiltrating arbitrary agent-local files (for
+     * example AWS credential or agent diagnostic log files) into the deployment
+     * bundle that is uploaded to S3.
+     */
+    public static addLocalFolderSafe(zip: AdmZip, localFolder: string, zipPathPrefix: string = ''): void {
+        const resolvedRoot = path.resolve(localFolder)
+
+        const walk = (currentDir: string, currentZipPath: string): void => {
+            const entries = fs.readdirSync(currentDir)
+            for (const entry of entries) {
+                const absEntry = path.join(currentDir, entry)
+                let lst: fs.Stats
+                try {
+                    lst = fs.lstatSync(absEntry)
+                } catch (err) {
+                    tl.debug(`Skipping ${absEntry}: ${(err as Error).message}`)
+                    continue
+                }
+                if (lst.isSymbolicLink()) {
+                    tl.warning(
+                        `Skipping symbolic link ${absEntry}: symlinks are not followed when creating the deployment bundle`
+                    )
+                    continue
+                }
+                if (lst.isDirectory()) {
+                    walk(absEntry, path.posix.join(currentZipPath, entry))
+                    continue
+                }
+                if (!lst.isFile()) {
+                    continue
+                }
+                try {
+                    const realPath = fs.realpathSync(absEntry)
+                    const relative = path.relative(resolvedRoot, realPath)
+                    if (relative.startsWith('..') || path.isAbsolute(relative)) {
+                        tl.warning(
+                            `Skipping ${absEntry}: resolved path ${realPath} is outside ${resolvedRoot}`
+                        )
+                        continue
+                    }
+                } catch (err) {
+                    tl.warning(`Skipping ${absEntry}: ${(err as Error).message}`)
+                    continue
+                }
+                zip.addFile(path.posix.join(currentZipPath, entry), fs.readFileSync(absEntry))
+            }
+        }
+
+        const normalizedPrefix = zipPathPrefix ? zipPathPrefix.replace(/\\/g, '/').replace(/^\/+/, '') : ''
+        walk(resolvedRoot, normalizedPrefix)
+    }
+
     public static async prepareAspNetCoreBundleWindows(
         dotnetPublishPath: string,
         tempDirectory: string
@@ -42,7 +98,7 @@ export class BeanstalkUtils {
                 zip.addFile('aws-windows-deployment-manifest.json', Buffer.from(manifest))
             } else {
                 console.log(tl.loc('AddingFilesFromDotnetPublish'))
-                zip.addLocalFolder(dotnetPublishPath, '/app/')
+                BeanstalkUtils.addLocalFolderSafe(zip, dotnetPublishPath, '/app/')
                 const manifest = this.generateManifest('/app/', '/')
                 console.log(tl.loc('AddingManifest'))
                 zip.addFile('aws-windows-deployment-manifest.json', Buffer.from(manifest))
@@ -76,7 +132,7 @@ export class BeanstalkUtils {
                 return dotnetPublishPath
             } else {
                 console.log(tl.loc('CreatingBeanstalkBundle', deploymentBundle))
-                zip.addLocalFolder(dotnetPublishPath)
+                BeanstalkUtils.addLocalFolderSafe(zip, dotnetPublishPath)
                 zip.writeZip(deploymentBundle)
             }
         } catch (err) {
