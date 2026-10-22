@@ -79,6 +79,15 @@
             "required": false
         },
         {
+            "name": "captureAsSecuredVar",
+            "type": "boolean",
+            "label": "Use secured variable",
+            "defaultValue": "true",
+            "helpMarkDown": "When selected the output variable created to hold the Lambda function response will be created as a secure build variable that will not echo to the console logs. This mode is set as the default to prevent accidental secrets leakage, as a function response may contain sensitive data.",
+            "groupName": "OutputOptions",
+            "required": false
+        },
+        {
             "name": "logType",
             "type": "pickList",
             "label": "Log Type",
