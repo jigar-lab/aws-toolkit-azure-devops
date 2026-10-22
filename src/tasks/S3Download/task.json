@@ -168,6 +168,7 @@
         "GlobbingFromPrefix": "Globbing object keys with prefix %s against %s to determine file downloads",
         "GlobbingFromRoot": "Globbing object keys from bucket root against %s to determine file downloads",
         "MatchedKey": "...matched key %s",
+        "SkippingUnsafeKey": "Skipping download of key %s: resolved destination escapes target folder",
         "DownloadingFiles": "Downloading files from %s in bucket %s to %s",
         "BucketNotExist": "Bucket %s does not exist",
         "TaskCompleted": "Downloads from S3 completed"

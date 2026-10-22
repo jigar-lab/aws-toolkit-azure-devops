@@ -43,15 +43,59 @@ export class TaskOperations {
 
         const allDownloads = []
         const allKeys = await this.fetchAllObjectKeys()
+        const root = path.resolve(this.taskParameters.targetFolder)
         for (const glob of this.taskParameters.globExpressions) {
             const matchedKeys = await this.matchObjectKeys(allKeys, this.taskParameters.sourceFolder, glob)
             for (const matchedKey of matchedKeys) {
+                const isDirKey: boolean = matchedKey.endsWith('/') || matchedKey.endsWith('\\')
                 let dest: string
                 if (this.taskParameters.flattenFolders) {
                     const fname: string = path.basename(matchedKey)
-                    dest = path.join(this.taskParameters.targetFolder, fname)
+                    dest = path.resolve(root, fname)
                 } else {
-                    dest = path.join(this.taskParameters.targetFolder, matchedKey)
+                    // Reject keys that attempt path traversal or absolute-path escape.
+                    // S3 object keys are opaque strings - we do not trust them as filesystem
+                    // paths. Reject backslashes (illegal segment separators on Windows that
+                    // are legal in S3 keys), a leading '/' (makes path.resolve ignore the
+                    // root), and any '..' segment. Then normalise to forward-slash segments
+                    // and resolve against the target root.
+                    const normalisedKey: string = matchedKey.replace(/\\/g, '/')
+                    const segments: string[] = normalisedKey.split('/')
+                    const hasTraversal: boolean =
+                        matchedKey.indexOf('\\') !== -1 ||
+                        normalisedKey.startsWith('/') ||
+                        segments.some(seg => seg === '..')
+                    if (hasTraversal) {
+                        console.log(tl.loc('SkippingUnsafeKey', matchedKey))
+                        continue
+                    }
+                    dest = path.resolve(root, normalisedKey)
+                }
+
+                // Containment check: dest must be at or under the resolved target root.
+                // Also resolve the parent directory through realpath (when it already
+                // exists) so pre-existing symlinks inside the target cannot redirect the
+                // write outside the root.
+                let containmentDest: string = dest
+                const parentDir: string = path.dirname(dest)
+                if (fs.existsSync(parentDir)) {
+                    try {
+                        const realParent: string = fs.realpathSync(parentDir)
+                        containmentDest = path.resolve(realParent, path.basename(dest))
+                    } catch (err) {
+                        console.log(tl.loc('SkippingUnsafeKey', matchedKey))
+                        continue
+                    }
+                }
+                if (containmentDest !== root && !containmentDest.startsWith(root + path.sep)) {
+                    console.log(tl.loc('SkippingUnsafeKey', matchedKey))
+                    continue
+                }
+                dest = containmentDest
+                // Preserve the directory-marker semantics expected by downloadFile:
+                // keys ending in a separator represent S3 folder markers.
+                if (isDirKey && !dest.endsWith(path.sep)) {
+                    dest = dest + path.sep
                 }
 
                 if (fs.existsSync(dest)) {
