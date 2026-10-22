@@ -10,6 +10,47 @@ export const transformSubstitute = 'substitute'
 export const readModeSingle = 'single'
 export const readModeHierarchy = 'hierarchy'
 
+// Names derived from remote SSM parameter names are used verbatim as Azure Pipelines
+// variable names, which the agent exposes to subsequent steps as process environment
+// variables. To prevent an actor with ssm:PutParameter on the configured path from
+// poisoning the agent environment (e.g. by naming a parameter leaf `NODE_OPTIONS` or
+// `LD_PRELOAD`), the SystemsManagerGetParameter sink validates the derived name against
+// a conservative character set and rejects names that collide with process-control or
+// agent-reserved variables. This helper centralises that policy.
+const ssmVariableNamePattern = /^[A-Za-z_][A-Za-z0-9_]*$/
+const reservedVariableNames = new Set(
+    [
+        'PATH',
+        'NODE_OPTIONS',
+        'LD_PRELOAD',
+        'LD_LIBRARY_PATH',
+        'DYLD_INSERT_LIBRARIES',
+        'DYLD_LIBRARY_PATH',
+        'PYTHONPATH',
+        'PYTHONSTARTUP',
+        'CLASSPATH'
+    ].map(n => n.toUpperCase())
+)
+const reservedVariablePrefixes = ['AWS_', 'AGENT_', 'SYSTEM_', 'BUILD_', 'TASK_', 'COMMON_']
+
+export function isReservedVariableName(name: string): boolean {
+    const upper = name.toUpperCase()
+    if (reservedVariableNames.has(upper)) {
+        return true
+    }
+    return reservedVariablePrefixes.some(prefix => upper.startsWith(prefix))
+}
+
+// Returns true if the supplied name is a syntactically-valid SSM-derived variable name
+// and does not collide with a process-control or agent-reserved variable. The check is
+// applied only to names derived from remote data (readModeHierarchy and the `substitute`
+// transform); names typed directly by the pipeline author (`custom`, and the explicit
+// `parameterName` input used by `readModeSingle` + `none`) are trusted and intentionally
+// excluded from this check so author-chosen names are not silently rejected.
+export function isSafeSsmVariableName(name: string): boolean {
+    return ssmVariableNamePattern.test(name) && !isReservedVariableName(name)
+}
+
 // Transforms the read parameter name depending on task settings. If the task was set
 // to read a single parameter, the input parameter name is in the task parameters. When
 // reading a hierarchy, we pass in the individual parameter name from the collection

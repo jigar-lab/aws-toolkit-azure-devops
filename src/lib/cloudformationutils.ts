@@ -8,6 +8,41 @@ import tl = require('azure-pipelines-task-lib/task')
 
 export const defaultTimeoutInMins = 60
 
+// Variable names derived from remote AWS data (e.g. CloudFormation stack output keys)
+// are used verbatim as Azure Pipelines variable names, which the agent then exposes to
+// subsequent steps as process environment variables. To prevent an actor with write
+// access to the stack/template from poisoning the agent environment by naming an output
+// `PATH`, `NODE_OPTIONS`, etc., we validate the derived name against a conservative
+// character set and reject names that collide with process-control or agent-reserved
+// variables. Invalid names are logged and skipped rather than silently set.
+const cloudFormationOutputKeyPattern = /^[A-Za-z][A-Za-z0-9]*$/
+const reservedVariableNames = new Set(
+    [
+        'PATH',
+        'NODE_OPTIONS',
+        'LD_PRELOAD',
+        'LD_LIBRARY_PATH',
+        'DYLD_INSERT_LIBRARIES',
+        'DYLD_LIBRARY_PATH',
+        'PYTHONPATH',
+        'PYTHONSTARTUP',
+        'CLASSPATH'
+    ].map(n => n.toUpperCase())
+)
+const reservedVariablePrefixes = ['AWS_', 'AGENT_', 'SYSTEM_', 'BUILD_', 'TASK_', 'COMMON_']
+
+export function isReservedVariableName(name: string): boolean {
+    const upper = name.toUpperCase()
+    if (reservedVariableNames.has(upper)) {
+        return true
+    }
+    return reservedVariablePrefixes.some(prefix => upper.startsWith(prefix))
+}
+
+export function isSafeStackOutputVariableName(name: string): boolean {
+    return cloudFormationOutputKeyPattern.test(name) && !isReservedVariableName(name)
+}
+
 // Retrieves the declared outputs of the stack and posts as either individual variables,
 // using the output member key as variable name, or a json-formatted blob with a variable
 // name of the stack name suffixed with 'Outputs'
@@ -39,6 +74,12 @@ export async function captureStackOutputs(
             if (stack.Outputs) {
                 stack.Outputs.forEach(o => {
                     if (o.OutputKey) {
+                        if (!isSafeStackOutputVariableName(o.OutputKey)) {
+                            tl.warning(
+                                `Skipping stack output '${o.OutputKey}': the output key is not a valid Azure Pipelines variable name or collides with a reserved/process-control variable (e.g. PATH, NODE_OPTIONS, AWS_*, AGENT_*, SYSTEM_*, BUILD_*). Rename the CloudFormation output to publish it as a pipeline variable.`
+                            )
+                            return
+                        }
                         console.log(tl.loc('CreatingStackOutputVariable', o.OutputKey))
                         tl.setVariable(o.OutputKey, `${o.OutputValue}`, asSecureVars)
                     }
